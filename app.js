@@ -3,6 +3,7 @@ const CDN = "https://cdn.jsdelivr.net/gh/workinwithai-create/PreEight@d58301e4a4
 const LOOKAHEAD_MS = 25;
 const SCHEDULE_AHEAD = 0.12;
 const TAIL_SEC = 0.45;
+const SAMPLE_SKIP = 0.00625; /* FluidR3 mp3 priming; keeps the downbeat on sample 0 */
 const SR = 48000;
 
 const KEYS = ["C","C#","D","Eb","E","F","F#","G","Ab","A","Bb","B"];
@@ -185,12 +186,12 @@ function playHit(context, voice, drum, when, gain, dur){
   const g = context.createGain();
   const peak = gain;
   g.gain.setValueAtTime(0.0001, when);
-  g.gain.linearRampToValueAtTime(peak, when + 0.004);
+  g.gain.linearRampToValueAtTime(peak, when + 0.0008);
   g.gain.linearRampToValueAtTime(0.0001, when + Math.max(0.02, dur));
   node.connect(g);
   const dest = context === ctx ? chairGain[voice] : context._chairs[voice];
   g.connect(dest);
-  node.start(when);
+  node.start(when, SAMPLE_SKIP);
   node.stop(when + dur + 0.02);
   if (context === ctx) track(node);
 }
@@ -222,7 +223,7 @@ function playNote(context, voice, midi, when, gain, dur, swell){
     const node = makeSource(context, hit.key, buf, rate);
     if (!node) continue;
     const g = context.createGain();
-    const attack = swell ? Math.min(0.18, dur * 0.4) : 0.008;
+    const attack = swell ? Math.min(0.18, dur * 0.4) : 0.0008;
     const rel = 0.02;
     g.gain.setValueAtTime(0.0001, t);
     g.gain.linearRampToValueAtTime(gain, t + attack);
@@ -231,7 +232,7 @@ function playNote(context, voice, midi, when, gain, dur, swell){
     node.connect(g);
     const dest = context === ctx ? chairGain[voice] : context._chairs[voice];
     g.connect(dest);
-    node.start(t);
+    node.start(t, SAMPLE_SKIP);
     node.stop(end + rel + 0.01);
     if (context === ctx) track(node);
   }
