@@ -422,20 +422,23 @@ async function decodeInto(offline){
   }
 }
 
-async function renderWav(withTail){
-  if (!state.unlocked){ $("licenseStatus").textContent = "Export locked — paste a Lemon Squeezy key"; return; }
-  if (missing.length) return;
-  const bars = state.bars;
-  const length = Math.round(bars * 4 * 60 / state.bpm * SR);
+function loopLength(bars, bpm){
+  return Math.round(bars * 4 * 60 / bpm * SR);
+}
+async function renderOffline(bars, bpm, side){
+  const length = loopLength(bars, bpm);
   const tail = Math.round(TAIL_SEC * SR);
   const offline = new OfflineAudioContext(2, length + tail, SR);
   await decodeInto(offline);
+  const prev = { bpm: state.bpm, bars: state.bars, side: state.side };
+  state.bpm = bpm; state.bars = bars; state.side = side;
   let t = 0;
-  const stepDur = 60 / state.bpm / 4;
+  const stepDur = 60 / bpm / 4;
   for (let i = 0; i < bars * 16; i++){
-    scheduleStep(i, t, offline, state.side);
+    scheduleStep(i, t, offline, side);
     t += stepDur;
   }
+  state.bpm = prev.bpm; state.bars = prev.bars; state.side = prev.side;
   const rendered = await offline.startRendering();
   const left = new Float32Array(length);
   const right = new Float32Array(length);
@@ -443,13 +446,20 @@ async function renderWav(withTail){
   const R = rendered.getChannelData(1);
   for (let i = 0; i < length; i++){ left[i] = L[i]; right[i] = R[i]; }
   for (let i = 0; i < tail && i < length; i++){ left[i] += L[length + i] || 0; right[i] += R[length + i] || 0; }
-  const blob = encodeWav24(left, right);
-  download(blob, fileBase() + (withTail ? "-with-tail" : "") + ".wav");
-  if (withTail){
-    const fullL = rendered.getChannelData(0).slice(0, length + tail);
-    const fullR = rendered.getChannelData(1).slice(0, length + tail);
-    download(encodeWav24(fullL, fullR), fileBase() + "-with-tail.wav");
+  return { left, right, length, tail, L, R };
+}
+async function renderWav(withTail){
+  if (!state.unlocked){ $("licenseStatus").textContent = "Export locked — paste a PickBar Lemon Squeezy key"; return; }
+  if (missing.length) return;
+  const bars = state.bars;
+  const pack = await renderOffline(bars, state.bpm, state.side);
+  if (!withTail){
+    download(encodeWav24(pack.left, pack.right), fileBase() + ".wav");
+    return;
   }
+  const fullL = pack.L.slice(0, pack.length + pack.tail);
+  const fullR = pack.R.slice(0, pack.length + pack.tail);
+  download(encodeWav24(fullL, fullR), fileBase() + "-with-tail.wav");
 }
 
 function fileBase(){
@@ -526,24 +536,47 @@ function midiFile(tracks){
   return out;
 }
 
+const PRODUCT_NEEDLE = "pickbar";
+function instanceName(){
+  let id = localStorage.getItem("pickbar-instance");
+  if (!id){
+    id = "pickbar-" + Math.random().toString(36).slice(2, 10);
+    localStorage.setItem("pickbar-instance", id);
+  }
+  return id;
+}
+async function licenseCall(path, key){
+  const r = await fetch("https://api.lemonsqueezy.com/v1/licenses/" + path, {
+    method: "POST",
+    headers: { "Accept": "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ license_key: key, instance_name: instanceName() })
+  });
+  return r.json();
+}
+function productOk(data){
+  const name = ((data && data.meta && data.meta.product_name) || "").toLowerCase();
+  return name.includes(PRODUCT_NEEDLE);
+}
 async function unlock(){
   const key = $("license").value.trim();
   if (!key){ $("licenseStatus").textContent = "Paste a license key"; return; }
   $("licenseStatus").textContent = "Checking Lemon Squeezy…";
   try {
-    const r = await fetch("https://api.lemonsqueezy.com/v1/licenses/validate", {
-      method: "POST",
-      headers: { "Accept": "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify({ license_key: key })
-    });
-    const data = await r.json();
-    if (data && data.valid){
-      state.unlocked = true; saveState();
-      $("licenseStatus").textContent = "Unlocked · " + (data.meta && data.meta.product_name || "license");
+    const data = await licenseCall("validate", key);
+    if (!(data && data.valid && productOk(data))){
+      state.unlocked = false; state.licenseKey = ""; saveState();
+      $("licenseStatus").textContent = data && data.valid
+        ? "Key is valid, but it is not a PickBar license"
+        : "Key not valid for export";
       return;
     }
-    $("licenseStatus").textContent = "Key not valid for export";
+    await licenseCall("activate", key);
+    state.unlocked = true;
+    state.licenseKey = key;
+    saveState();
+    $("licenseStatus").textContent = "Unlocked · " + data.meta.product_name;
   } catch (e) {
+    state.unlocked = false; saveState();
     $("licenseStatus").textContent = "License host unreachable. Export stays locked.";
   }
 }
@@ -592,17 +625,46 @@ function bind(){
 }
 
 let booted = false;
+let audioReady = false;
+function showTap(){
+  const gate = $("tapGate");
+  if (gate) gate.hidden = audioReady;
+}
 async function boot(){
   ensureAudio();
+  if (ctx.state !== "running") await ctx.resume();
+  audioReady = ctx.state === "running";
+  showTap();
   if (!booted){
     booted = true;
     $("status").textContent = "Seating chairs…";
     await loadSamples();
   }
+  return audioReady && !missing.length;
 }
+async function acceptExport(){
+  const expected = loopLength(8, 92);
+  const prev = { bpm: state.bpm, bars: state.bars, side: state.side, recipe: state.recipe };
+  state.recipe = "bass-five";
+  const pack = await renderOffline(8, 92, "B");
+  state.bpm = prev.bpm; state.bars = prev.bars; state.side = prev.side; state.recipe = prev.recipe;
+  let first = -1;
+  for (let i = 0; i < pack.left.length; i++){
+    if (Math.abs(pack.left[i]) > 0.001 || Math.abs(pack.right[i]) > 0.001){ first = i; break; }
+  }
+  const ms = first < 0 ? null : (first / SR) * 1000;
+  return { samples: pack.length, expected, match: pack.length === expected, firstSample: first, firstMs: ms };
+}
+window.__pickbarAccept = acceptExport;
 
 loadState();
-if (state.unlocked) $("licenseStatus").textContent = "Unlocked on this browser";
+if (state.unlocked && state.licenseKey){
+  $("license").value = state.licenseKey;
+  unlock();
+} else {
+  state.unlocked = false;
+  $("licenseStatus").textContent = "Export locked until a PickBar key validates";
+}
 ["bpm","key","chords","bars"].forEach(id => {
   $(id).onchange = () => {
     state.bpm = Math.max(60, Math.min(180, parseInt($("bpm").value, 10) || 98));
@@ -612,8 +674,14 @@ if (state.unlocked) $("licenseStatus").textContent = "Unlocked on this browser";
     saveState(); paint();
   };
 });
-$("playA").onclick = async () => { await boot(); start("A"); };
-$("playB").onclick = async () => { await boot(); start("B"); };
+async function arm(side){
+  const ok = await boot();
+  if (!ok) return;
+  start(side);
+}
+$("playA").onclick = () => arm("A");
+$("playB").onclick = () => arm("B");
+if ($("tapGate")) $("tapGate").onclick = () => arm("B");
 $("stop").onclick = stopAll;
 $("wav").onclick = () => renderWav(false);
 $("wavTail").onclick = () => renderWav(true);
@@ -624,4 +692,5 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") stopAll();
 });
 bind();
-$("status").textContent = "Tap A or B to start audio";
+$("status").textContent = "Tap to start audio";
+showTap();

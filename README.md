@@ -24,11 +24,11 @@ Yesterday's ship was TagFour (four bars *after* the last chorus, then silence). 
 
 ## Pricing
 
-One-time **$29** on Lemon Squeezy. Mirror on Gumroad.
+Planned one-time **$29** on Lemon Squeezy, mirrored on Gumroad. Do not subscribe it.
 
-Do not subscribe it. There is no stem server, no monthly sample library, no seat. Recurring billing belongs to AuraMix / MixForge / the Forge Pass ($9 tool or $24 bundle).
+Checkout and license delivery are **not connected**. No Lemon Squeezy product exists for PickBar yet, so this build does not claim a price at the register. Export stays locked until a key validates, activates, and the product name contains "PickBar". Any other Lemon key is rejected. Playback is free.
 
-Export (WAV and MIDI) stays locked until a Lemon Squeezy license key validates. Playback is open.
+Not shipped. Source is on GitHub and https://pickbar.vercel.app plays, but a permanent paid listing still needs the product, a buy URL, and a key that passes the gate.
 
 ## License
 
